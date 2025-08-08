@@ -1,0 +1,14 @@
+html, body {
+    margin: 0;
+    overflow: hidden;
+    background-color: transparent;
+}
+
+img {
+    width: 128px;
+    height: 128px;
+    display: block;
+    image-rendering: pixelated;
+    -webkit-user-drag: none;
+    user-select: none;
+}

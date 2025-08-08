@@ -1,0 +1,37 @@
+# macOS
+.DS_Store
+
+# Node/Vite/React
+node_modules/
+dist/
+.build/
+*.log
+npm-debug.log*
+pnpm-lock.yaml
+yarn.lock
+# (팀에서 잠글지 결정: 한 가지 매니저만 쓸 거면 lock 유지 추천)
+
+# Python/FastAPI
+__pycache__/
+*.pyc
+.venv/
+.env
+.env.*
+
+# Editor
+.vscode/
+.idea/
+
+# Build artifacts
+*.local
+*.cache
+coverage/
+
+# Electron build
+out/
+release/
+
+# Supabase
+.supabase/
+
+catset_assets/
