@@ -6,7 +6,11 @@ if (!window.electronAPI) {
 
 // Debug image loading
 catGif.addEventListener("error", (e) => {
-  console.error("[PixelPaws] <img> failed to load:", catGif?.src, e?.message || e);
+  console.error(
+    "[PixelPaws] <img> failed to load:",
+    catGif?.src,
+    e?.message || e
+  );
 });
 catGif.addEventListener("load", () => {
   console.log("[PixelPaws] <img> loaded:", catGif?.src);
@@ -38,6 +42,7 @@ let isDragging = false;
 let dragOffsetX = 0;
 let dragOffsetY = 0;
 let movedDuringDrag = false;
+let isPanelOpen = false;
 
 let isChasing = false;
 let chaseUntil = 0;
@@ -46,6 +51,9 @@ let mousePos = { x: 0, y: 0 };
 let animationFrameId = null; // To manage requestAnimationFrame calls
 let behaviorTimerId = null; // To manage scheduled random behaviors
 
+// 고양이 집 상태 관리
+let isInCatHouse = false;
+
 // Fixed durations for idle poses
 const SIT_DURATION_MS = 60000; // 1 minute
 const LIEDOWN_DURATION_MS = 60000; // 1 minute
@@ -53,11 +61,8 @@ const JUMP_DURATION_MS = 600; // Jump animation duration before chasing
 const JUMP_HEIGHT_PX = 24; // Vertical lift during jump
 const LAND_DURATION_MS = 400; // Land animation duration before chasing
 let isJumping = false; // prevent re-entrant jump
-let remoteManifest = null; // cached remote
 let mustWalkNext = false; // ensure movement after long rest
 let firstBehavior = true; // force an early first action
-let visibilityPollTimer = null;
-let remotePollRetryTimer = null;
 
 function clearBehaviorTimer() {
   if (behaviorTimerId) {
@@ -79,36 +84,59 @@ async function init() {
     return rel; // fallback
   };
 
-  // Try remote manifest first
-  const remote = await loadRemoteManifestSafe(1200); // do not block startup too long
-  const base = remote?.baseUrl || "";
-  const resolve = (p) => (base ? base.replace(/\/$/, "") + "/" + p.replace(/^\//, "") : getPath(p));
-
-  idleGif = resolve(remote?.files?.idle || "catset_assets/catset_gifs/cat01_gifs/cat01_idle_8fps.gif");
-  walkGif = resolve(remote?.files?.walk || "catset_assets/catset_gifs/cat01_gifs/cat01_walk_8fps.gif");
-  console.log("Walk GIF Path:", walkGif);
-  runGif = resolve(remote?.files?.run || "catset_assets/catset_gifs/cat01_gifs/cat01_run_12fps.gif");
-  console.log("Run GIF Path:", runGif);
-  liftedGif = resolve(remote?.files?.lifted || "catset_assets/catset_gifs/cat01_gifs/cat01_fright_12fps.gif");
-  attackGif = resolve(remote?.files?.attack || "catset_assets/catset_gifs/cat01_gifs/cat01_attack_12fps.gif");
-  sitGif = resolve(remote?.files?.sit || "catset_assets/catset_gifs/cat01_gifs/cat01_sit_8fps.gif");
-  lieDownGif = resolve(remote?.files?.liedown || "catset_assets/catset_gifs/cat01_gifs/cat01_liedown_8fps.gif");
-  jumpGif = resolve(remote?.files?.jump || "catset_assets/catset_gifs/cat01_gifs/cat01_jump_12fps.gif");
-  landGif = resolve(remote?.files?.land || "catset_assets/catset_gifs/cat01_gifs/cat01_land_12fps.gif");
+  // Load from local assets only
+  const resolve = (relPath) => getPath(relPath.replace(/^\//, ""));
+  idleGif = resolve("catset_assets/catset_gifs/cat01_gifs/cat01_idle_8fps.gif");
+  walkGif = resolve("catset_assets/catset_gifs/cat01_gifs/cat01_walk_8fps.gif");
+  runGif = resolve("catset_assets/catset_gifs/cat01_gifs/cat01_run_12fps.gif");
+  liftedGif = resolve(
+    "catset_assets/catset_gifs/cat01_gifs/cat01_wallgrab_8fps.gif"
+  );
+  attackGif = resolve(
+    "catset_assets/catset_gifs/cat01_gifs/cat01_attack_12fps.gif"
+  );
+  sitGif = resolve("catset_assets/catset_gifs/cat01_gifs/cat01_sit_8fps.gif");
+  lieDownGif = resolve(
+    "catset_assets/catset_gifs/cat01_gifs/cat01_liedown_8fps.gif"
+  );
+  jumpGif = resolve(
+    "catset_assets/catset_gifs/cat01_gifs/cat01_jump_12fps.gif"
+  );
+  landGif = resolve(
+    "catset_assets/catset_gifs/cat01_gifs/cat01_land_12fps.gif"
+  );
   console.log("Attack GIF Path:", attackGif);
   console.log("Sit GIF Path:", sitGif);
   console.log("LieDown GIF Path:", lieDownGif);
   console.log("Jump GIF Path:", jumpGif);
   console.log("Land GIF Path:", landGif);
 
-  const workAreaSize = (await window.electronAPI?.getWorkAreaSize?.()) || { width: 1920, height: 1080 };
+  const workAreaSize = (await window.electronAPI?.getWorkAreaSize?.()) || {
+    width: 1920,
+    height: 1080,
+  };
   workAreaWidth = workAreaSize.width;
   workAreaHeight = workAreaSize.height;
 
-  // Initial position (randomly within the work area)
-  currentX = Math.random() * (workAreaWidth - catWidth);
-  currentY = Math.random() * (workAreaHeight - catHeight);
-  try { window.electronAPI?.setWindowPosition?.(currentX, currentY); } catch (_) {}
+  // Initial position (use saved position from localStorage if available, otherwise random)
+  const savedPos = localStorage.getItem("catPosition");
+  if (savedPos) {
+    try {
+      const pos = JSON.parse(savedPos);
+      currentX = pos.x;
+      currentY = pos.y;
+    } catch (e) {
+      // 저장된 위치가 유효하지 않으면 랜덤 위치 사용
+      currentX = Math.random() * (workAreaWidth - catWidth);
+      currentY = Math.random() * (workAreaHeight - catHeight);
+    }
+  } else {
+    currentX = Math.random() * (workAreaWidth - catWidth);
+    currentY = Math.random() * (workAreaHeight - catHeight);
+  }
+  try {
+    window.electronAPI?.setWindowPosition?.(currentX, currentY);
+  } catch (_) {}
 
   // Poll mouse position ~60fps for chase mode
   setInterval(async () => {
@@ -122,8 +150,7 @@ async function init() {
   mustWalkNext = true; // ensure we walk first rather than rest for 1min
   startCatBehavior();
 
-  // Remote visibility/cat selection poller
-  startRemotePoller();
+  // No remote poller: purely local assets
 }
 
 function cancelAnimFrame() {
@@ -185,16 +212,25 @@ function doJumpThenChase(durationMs) {
   catGif.src = jumpGif;
 
   const baseY = currentY;
-  const start = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
+  const start =
+    typeof performance !== "undefined" && performance.now
+      ? performance.now()
+      : Date.now();
 
   const step = (nowTs) => {
-    const now = nowTs ?? ((typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now());
+    const now =
+      nowTs ??
+      (typeof performance !== "undefined" && performance.now
+        ? performance.now()
+        : Date.now());
     const elapsed = now - start;
     const t = Math.min(1, elapsed / JUMP_DURATION_MS);
     // Smooth up-and-down arc: 0 -> -H -> 0
     const offsetY = -JUMP_HEIGHT_PX * Math.sin(Math.PI * t);
     const y = baseY + offsetY;
-    try { window.electronAPI?.setWindowPosition?.(currentX, y); } catch (_) {}
+    try {
+      window.electronAPI?.setWindowPosition?.(currentX, y);
+    } catch (_) {}
 
     if (t < 1 && !isDragging) {
       animationFrameId = requestAnimationFrame(step);
@@ -202,7 +238,9 @@ function doJumpThenChase(durationMs) {
       animationFrameId = null;
       // Restore baseline Y to prevent drift
       currentY = baseY;
-      try { window.electronAPI?.setWindowPosition?.(currentX, currentY); } catch (_) {}
+      try {
+        window.electronAPI?.setWindowPosition?.(currentX, currentY);
+      } catch (_) {}
       // Play land animation briefly, then chase
       if (!isDragging) {
         catGif.src = landGif;
@@ -241,12 +279,13 @@ function doLieDown(durationMs) {
   }, durationMs);
 }
 
-function getRandomWaitTime() {
-  return Math.random() * (3000 - 1200) + 1200; // 1.2 to 3.0 seconds
+function doSleep() {
+  setIdle();
+  catGif.src = lieDownGif;
 }
 
-function getRandomInRange(minMs, maxMs) {
-  return Math.floor(Math.random() * (maxMs - minMs + 1)) + minMs;
+function getRandomWaitTime() {
+  return Math.random() * (3000 - 1200) + 1200; // 1.2 to 3.0 seconds
 }
 
 function getRandomDestination() {
@@ -255,7 +294,7 @@ function getRandomDestination() {
 }
 
 function startCatBehavior() {
-  if (isDragging || isChasing) return; // Don't start new behavior if interacting
+  if (isDragging || isChasing || isPanelOpen) return; // Don't start new behavior if interacting or panel is open
   clearBehaviorTimer();
   const delay = firstBehavior ? 400 : getRandomWaitTime();
   firstBehavior = false;
@@ -303,7 +342,9 @@ window.addEventListener("mousemove", (e) => {
   movedDuringDrag = movedDuringDrag || exceeded;
   currentX = newX;
   currentY = newY;
-  try { window.electronAPI?.setWindowPosition?.(currentX, currentY); } catch (_) {}
+  try {
+    window.electronAPI?.setWindowPosition?.(currentX, currentY);
+  } catch (_) {}
 });
 
 // End drag
@@ -397,111 +438,125 @@ function moveCat() {
     catGif.style.transform = "scaleX(1)";
   }
 
-  try { window.electronAPI?.setWindowPosition?.(currentX, currentY); } catch (_) {}
+  try {
+    window.electronAPI?.setWindowPosition?.(currentX, currentY);
+  } catch (_) {}
   animationFrameId = requestAnimationFrame(moveCat);
 }
 
+const controlPanel = document.getElementById("control-panel");
+const closePanelButton = document.getElementById("close-panel");
+const openCatHouseButton = document.getElementById("open-cat-house");
+const sleepButton = document.getElementById("sleep");
+const goForAWalkButton = document.getElementById("go-for-a-walk");
+
+catGif.addEventListener("contextmenu", (e) => {
+  e.preventDefault();
+  isPanelOpen = true;
+  setIdle(); // stop cat movement
+  window.electronAPI.resizeWindow(128 + 200, 128);
+  controlPanel.classList.remove("hidden");
+});
+
+function closeMenu() {
+  isPanelOpen = false;
+  controlPanel.classList.add("hidden");
+
+  // 고양이 집 상태가 아닐 때만 배경화면 클래스 제거
+  if (!isInCatHouse) {
+    document.body.classList.remove("cat-house-open");
+    window.electronAPI.resizeWindow(128, 128);
+    // 창 투명도 복원
+    window.electronAPI.restoreWindowTransparency();
+  }
+
+  startCatBehavior();
+}
+
+closePanelButton.addEventListener("click", () => {
+  closeMenu();
+});
+
+openCatHouseButton.addEventListener("click", async () => {
+  const rect = catGif.getBoundingClientRect();
+  catGif.style.left = `${rect.left}px`;
+  catGif.style.top = `${rect.top}px`;
+
+  // 고양이 집 상태로 전환
+  isInCatHouse = true;
+  document.body.classList.add("cat-house-open");
+  controlPanel.classList.add("fullscreen");
+
+  // 화면 크기를 가져와서 창을 전체 크기로 조절
+  const workAreaSize = await window.electronAPI.getWorkAreaSize();
+  window.electronAPI.resizeWindow(workAreaSize.width, workAreaSize.height);
+
+  // 창을 최상단 왼쪽으로 이동
+  window.electronAPI.setWindowPosition(0, 0);
+
+  //- 전체화면일 때만 보이는 버튼들
+  openCatHouseButton.classList.add("hidden");
+  sleepButton.classList.add("hidden");
+  closePanelButton.classList.add("hidden");
+  goForAWalkButton.classList.remove("hidden");
+});
+
+goForAWalkButton.addEventListener("click", async () => {
+  // 현재 위치를 localStorage에 저장
+  localStorage.setItem(
+    "catPosition",
+    JSON.stringify({ x: currentX, y: currentY })
+  );
+
+  // 고양이 집 상태 해제
+  isInCatHouse = false;
+
+  // 배경화면 클래스 제거
+  document.body.classList.remove("cat-house-open");
+  controlPanel.classList.remove("fullscreen");
+
+  // 고양이 위치 초기화
+  catGif.style.left = "";
+  catGif.style.top = "";
+
+  // 창 크기를 원래대로 복원
+  window.electronAPI.resizeWindow(128, 128);
+
+  // 창 투명도 복원
+  await window.electronAPI.restoreWindowTransparency();
+
+  //- 전체화면이 아닐 때만 보이는 버튼들
+  openCatHouseButton.classList.remove("hidden");
+  sleepButton.classList.remove("hidden");
+  closePanelButton.classList.remove("hidden");
+  goForAWalkButton.classList.add("hidden");
+
+  // 메뉴 닫기 (closeMenu 함수 호출하지 않음)
+  isPanelOpen = false;
+  controlPanel.classList.add("hidden");
+
+  // 고양이 행동 재시작
+  startCatBehavior();
+
+  // 창 크기 조절 후 마우스 이벤트 무시 설정
+  setTimeout(() => {
+    window.electronAPI.setIgnoreMouseEvents(false);
+  }, 100);
+
+  // 추가 지연 후 배경화면 클래스 강제 제거
+  setTimeout(() => {
+    document.body.classList.remove("cat-house-open");
+  }, 200);
+
+  // 마지막에 새로고침
+  setTimeout(() => {
+    window.location.reload();
+  }, 300);
+});
+
+sleepButton.addEventListener("click", () => {
+  closeMenu();
+  doSleep();
+});
+
 init();
-// --- Remote control: poll visibility and selection from SaaS ---
-async function startRemotePoller() {
-  clearInterval(visibilityPollTimer);
-  if (remotePollRetryTimer) {
-    clearTimeout(remotePollRetryTimer);
-    remotePollRetryTimer = null;
-  }
-  const deviceId = await window.electronAPI?.getDeviceId?.();
-  const cfg0 = await window.electronAPI?.getConfig?.();
-  if (!deviceId || !cfg0?.apiBase || !cfg0?.apiToken) {
-    // Retry later until config is provided
-    remotePollRetryTimer = setTimeout(startRemotePoller, 2000);
-    return;
-  }
-
-  // One-time device registration/upsert so DB has a row
-  try {
-    const base0 = cfg0.apiBase.replace(/\/$/, "");
-    const url0 = `${base0}/v1/devices/${encodeURIComponent(deviceId)}/state`;
-    await fetch(url0, {
-      method: "PATCH",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${cfg0.apiToken}`,
-      },
-      body: JSON.stringify({
-        visible: true,
-        selectedCatId: cfg0.selectedCatId || null,
-      }),
-    });
-  } catch (_) {}
-
-  const tick = async () => {
-    try {
-      // Fetch latest config each tick to reflect updates without restart
-      const cfg = await window.electronAPI?.getConfig?.();
-      if (!cfg?.apiBase || !cfg?.apiToken) return;
-      const base = cfg.apiBase.replace(/\/$/, "");
-      const url = `${base}/v1/devices/${encodeURIComponent(deviceId)}/state`;
-      const resp = await fetch(url, { headers: { Authorization: `Bearer ${cfg.apiToken}` } });
-      if (!resp.ok) return;
-      const data = await resp.json();
-      // expected: { visible: boolean, selectedCatId?: string }
-      if (typeof data.visible === "boolean") {
-        await window.electronAPI?.setWindowVisibility?.(data.visible);
-      }
-      if (data.selectedCatId && data.selectedCatId !== cfg.selectedCatId) {
-        await window.electronAPI?.setConfig?.({ selectedCatId: data.selectedCatId });
-        remoteManifest = null; // invalidate cache
-        // reload assets seamlessly
-        await reloadAssetsFromRemote();
-      }
-    } catch (_) {}
-  };
-
-  visibilityPollTimer = setInterval(tick, 3000);
-  tick();
-}
-
-async function reloadAssetsFromRemote() {
-  const remote = await loadRemoteManifestSafe(1500);
-  if (!remote) return;
-  const base = remote?.baseUrl || "";
-  const resolve = (p) => (base ? base.replace(/\/$/, "") + "/" + p.replace(/^\//, "") : p);
-  idleGif = resolve(remote?.files?.idle || idleGif);
-  walkGif = resolve(remote?.files?.walk || walkGif);
-  runGif = resolve(remote?.files?.run || runGif);
-  liftedGif = resolve(remote?.files?.lifted || liftedGif);
-  attackGif = resolve(remote?.files?.attack || attackGif);
-  sitGif = resolve(remote?.files?.sit || sitGif);
-  lieDownGif = resolve(remote?.files?.liedown || lieDownGif);
-  jumpGif = resolve(remote?.files?.jump || jumpGif);
-  landGif = resolve(remote?.files?.land || landGif);
-  // reflect current state image immediately
-  const currentSrc = { idle: idleGif, walk: walkGif, run: runGif }[
-    isChasing ? "run" : isWalking ? "walk" : "idle"
-  ];
-  if (currentSrc) catGif.src = currentSrc;
-}
-
-// --- SaaS: load remote manifest helpers ---
-async function loadRemoteManifestSafe(timeoutMs) {
-  try {
-    if (remoteManifest) return remoteManifest;
-    const cfg = await window.electronAPI?.getConfig?.();
-    if (!cfg?.apiBase || !cfg?.selectedCatId) return null;
-    const url = `${cfg.apiBase.replace(/\/$/, "")}/v1/cats/${encodeURIComponent(cfg.selectedCatId)}/manifest`;
-    const controller = new AbortController();
-    const t = timeoutMs ? setTimeout(() => controller.abort("timeout"), timeoutMs) : null;
-    const resp = await fetch(url, {
-      headers: cfg.apiToken ? { Authorization: `Bearer ${cfg.apiToken}` } : undefined,
-      signal: controller.signal,
-    }).finally(() => t && clearTimeout(t));
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    const data = await resp.json();
-    // expected: { baseUrl: string, files: { idle, walk, run, lifted, attack, sit, liedown, jump, land } }
-    remoteManifest = data;
-    return data;
-  } catch (e) {
-    console.warn("[PixelPaws] remote manifest load failed:", e);
-    return null;
-  }
-}

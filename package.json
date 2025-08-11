@@ -28,17 +28,29 @@
     ],
     "mac": {
       "category": "public.app-category.utilities",
-      "target": ["dmg", "zip"],
+      "target": [
+        "dmg",
+        "zip"
+      ],
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist",
-      "hardenedRuntime": true
+      "hardenedRuntime": true,
+      "icon": "./assets/icons/icon.icns"
     },
     "win": {
-      "target": ["nsis", "zip"]
+      "target": [
+        "nsis",
+        "zip"
+      ],
+      "icon": "./assets/icons/icon.ico"
     },
     "linux": {
-      "target": ["AppImage", "deb"],
-      "category": "Utility"
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Utility",
+      "icon": "./assets/icons/icon.png"
     }
   }
 }

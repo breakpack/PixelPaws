@@ -6,11 +6,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
   setIgnoreMouseEvents: (ignore, options) =>
     ipcRenderer.send("set-ignore-mouse-events", ignore, options),
   getMousePosition: () => ipcRenderer.invoke("get-mouse-position"),
-  moveMouse: (x, y) => ipcRenderer.invoke("move-mouse", x, y),
-  // Config bridge for SaaS integration
-  getConfig: () => ipcRenderer.invoke("get-config"),
-  setConfig: (partial) => ipcRenderer.invoke("set-config", partial),
-  openExternal: (url) => ipcRenderer.invoke("open-external", url),
-  getDeviceId: () => ipcRenderer.invoke("get-device-id"),
-  setWindowVisibility: (visible) => ipcRenderer.invoke("set-window-visibility", visible),
+
+  resizeWindow: (width, height) =>
+    ipcRenderer.send("resize-window", width, height),
+  toggleFullscreen: () => ipcRenderer.invoke("toggle-fullscreen"),
+  restoreWindowTransparency: () =>
+    ipcRenderer.invoke("restore-window-transparency"),
 });
