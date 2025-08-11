@@ -5,7 +5,7 @@
 본 프로젝트는 바이브 코딩(assistant 기반 페어프로그래밍)으로 개발되었습니다.
 
 ## 데모 영상
-
+![데모영상](https://github.com/breakpack/PixelPaws/blob/main/PixelPaws.mov)
 > 위 이미지를 클릭하면 YouTube에서 데모 영상을 볼 수 있습니다.
 
 
