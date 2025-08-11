@@ -1,4 +1,12 @@
-const { app, BrowserWindow, ipcMain, screen, shell } = require("electron");
+const {
+  app,
+  BrowserWindow,
+  ipcMain,
+  screen,
+  shell,
+  Menu,
+  clipboard,
+} = require("electron");
 const path = require("path");
 const fs = require("fs");
 const crypto = require("crypto");
@@ -15,7 +23,12 @@ function loadConfig() {
       return JSON.parse(raw);
     }
   } catch (_) {}
-  return { apiBase: process.env.PIXELPAWS_API_BASE || "", apiToken: process.env.PIXELPAWS_API_TOKEN || "", selectedCatId: "" };
+  return {
+    apiBase: process.env.PIXELPAWS_API_BASE || "",
+    apiToken: process.env.PIXELPAWS_API_TOKEN || "",
+    selectedCatId: "",
+    webBase: process.env.PIXELPAWS_WEB_BASE || "",
+  };
 }
 function saveConfig(cfg) {
   try {
@@ -40,10 +53,12 @@ function createWindow() {
     transparent: !opaqueDebug,
     frame: false,
     alwaysOnTop: true,
+    resizable: false,
     // Tiny alpha helps some macOS/GPU combos paint transparent windows
     backgroundColor: opaqueDebug ? "#222222" : "#00000001",
     hasShadow: false,
     skipTaskbar: true,
+    icon: path.join(__dirname, "assets/icons/image.png"),
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
@@ -57,49 +72,17 @@ function createWindow() {
   // Keep window interactive by default
   catWindow.setIgnoreMouseEvents(false);
 
-  // Open DevTools to surface any preload/renderer errors
-  catWindow.webContents.openDevTools({ mode: "detach" });
+  // Open DevTools
+  // catWindow.webContents.openDevTools({ mode: "detach" });
 
   // Pipe renderer console logs to main process stdout for easier debugging
-  catWindow.webContents.on("console-message", (_e, level, message, line, sourceId) => {
-    const levelTag = ["LOG", "WARN", "ERROR"][Math.min(level, 2)] || "LOG";
-    console.log(`[renderer:${levelTag}] ${sourceId}:${line} ${message}`);
-  });
-
-  // Config IPC
-  ipcMain.handle("get-config", () => loadConfig());
-  ipcMain.handle("set-config", (_evt, partial) => {
-    const current = loadConfig();
-    const next = { ...current, ...(partial || {}) };
-    return saveConfig(next);
-  });
-  ipcMain.handle("open-external", (_evt, url) => shell.openExternal(url));
-
-  // Device identity (persisted) for SaaS remote control
-  ipcMain.handle("get-device-id", () => {
-    const cfg = loadConfig();
-    if (cfg.deviceId && typeof cfg.deviceId === "string") return cfg.deviceId;
-    const id = crypto.randomUUID();
-    saveConfig({ ...cfg, deviceId: id });
-    return id;
-  });
-
-  // Window visibility toggle
-  ipcMain.handle("set-window-visibility", (_evt, visible) => {
-    try {
-      if (!catWindow) return { ok: false, error: "no-window" };
-      if (visible) {
-        catWindow.showInactive();
-        catWindow.setIgnoreMouseEvents(false);
-      } else {
-        catWindow.setIgnoreMouseEvents(true, { forward: true });
-        catWindow.hide();
-      }
-      return { ok: true };
-    } catch (e) {
-      return { ok: false, error: String(e) };
+  catWindow.webContents.on(
+    "console-message",
+    (_e, level, message, line, sourceId) => {
+      const levelTag = ["LOG", "WARN", "ERROR"][Math.min(level, 2)] || "LOG";
+      console.log(`[renderer:${levelTag}] ${sourceId}:${line} ${message}`);
     }
-  });
+  );
 
   ipcMain.on("set-window-position", (event, x, y) => {
     catWindow.setPosition(Math.round(x), Math.round(y));
@@ -114,25 +97,97 @@ function createWindow() {
     catWindow.setIgnoreMouseEvents(ignore, options);
   });
 
+  ipcMain.on("resize-window", (event, width, height) => {
+    if (catWindow) {
+      catWindow.setSize(width, height);
+    }
+  });
+
+  ipcMain.handle("toggle-fullscreen", () => {
+    // 전체화면 기능은 더 이상 사용하지 않음
+    return { ok: true, isFullScreen: false };
+  });
+
   ipcMain.handle("get-mouse-position", () => {
     return screen.getCursorScreenPoint();
   });
 
-  ipcMain.handle("move-mouse", async (_evt, x, y) => {
-    try {
-      // Try to lazy-require nut-js to move the system cursor (optional dependency)
-      const { mouse, straightTo } = require("@nut-tree/nut-js");
-      await mouse.move(straightTo({ x: Math.round(x), y: Math.round(y) }));
+  ipcMain.handle("restore-window-transparency", () => {
+    if (catWindow) {
+      const opaqueDebug = process.env.OPAQUE_DEBUG === "1";
+
+      // 창의 투명도와 그림자 설정을 원래대로 복원
+      catWindow.setBackgroundColor(opaqueDebug ? "#222222" : "#00000001");
+      catWindow.setHasShadow(false);
+
+      // 창이 항상 최상위에 있도록 설정
+      catWindow.setAlwaysOnTop(true);
+
+      // 창 크기 조절 비활성화
+      catWindow.setResizable(false);
+
+      // 마우스 이벤트 무시 설정 (투명한 영역 클릭 방지)
+      catWindow.setIgnoreMouseEvents(false);
+
       return { ok: true };
-    } catch (e) {
-      // nut-js not installed or failed; fall back silently
-      return { ok: false, error: String(e) };
     }
+    return { ok: false, error: "no-window" };
   });
 
   catWindow.on("closed", () => {
     catWindow = null;
   });
+
+  // Context menu: open/copy web control link & copy device id
+  catWindow.webContents.on("context-menu", async (_e) => {
+    const template = [
+      {
+        label: "Open Control Panel",
+        click: async () => {
+          const cfg = loadConfig();
+          const id = await getOrCreateDeviceId();
+          const url = buildControlUrl(cfg, id);
+          if (url) shell.openExternal(url);
+        },
+      },
+      {
+        label: "Copy Control Link",
+        click: async () => {
+          const cfg = loadConfig();
+          const id = await getOrCreateDeviceId();
+          const url = buildControlUrl(cfg, id);
+          if (url) clipboard.writeText(url);
+        },
+      },
+      {
+        type: "separator",
+      },
+      {
+        label: "Copy Device ID",
+        click: async () => {
+          const id = await getOrCreateDeviceId();
+          clipboard.writeText(id);
+        },
+      },
+    ];
+    const menu = Menu.buildFromTemplate(template);
+    menu.popup({ window: catWindow });
+  });
+
+  async function getOrCreateDeviceId() {
+    const cfg = loadConfig();
+    if (cfg.deviceId && typeof cfg.deviceId === "string") return cfg.deviceId;
+    const id = crypto.randomUUID();
+    saveConfig({ ...cfg, deviceId: id });
+    return id;
+  }
+
+  function buildControlUrl(cfg, deviceId) {
+    const base = (cfg.webBase || "").trim();
+    if (!base) return "";
+    const clean = base.replace(/\/$/, "");
+    return `${clean}/?device=${encodeURIComponent(deviceId)}`;
+  }
 }
 
 app.whenReady().then(createWindow);
