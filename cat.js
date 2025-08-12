@@ -1,4 +1,8 @@
 const catGif = document.getElementById("cat-gif");
+const catSelect = document.getElementById("cat-select");
+
+let selectedCat = localStorage.getItem("selectedCat") || "01";
+catSelect.value = selectedCat;
 
 if (!window.electronAPI) {
   console.error("[PixelPaws] electronAPI missing: check preload.js exposure");
@@ -85,7 +89,11 @@ async function init() {
   };
 
   // Load from local assets only
-  const resolve = (relPath) => getPath(relPath.replace(/^\//, ""));
+  const resolve = (relPath) => {
+    const catId = `cat${selectedCat}`;
+    const newPath = relPath.replace(/cat\d\d/g, catId);
+    return getPath(newPath.replace(/^\//, ""));
+  };
   idleGif = resolve("catset_assets/catset_gifs/cat01_gifs/cat01_idle_8fps.gif");
   walkGif = resolve("catset_assets/catset_gifs/cat01_gifs/cat01_walk_8fps.gif");
   runGif = resolve("catset_assets/catset_gifs/cat01_gifs/cat01_run_12fps.gif");
@@ -137,14 +145,6 @@ async function init() {
   try {
     window.electronAPI?.setWindowPosition?.(currentX, currentY);
   } catch (_) {}
-
-  // Poll mouse position ~60fps for chase mode
-  setInterval(async () => {
-    try {
-      const pos = (await window.electronAPI?.getMousePosition?.()) || mousePos;
-      mousePos = pos;
-    } catch (_) {}
-  }, 16);
 
   setIdle();
   mustWalkNext = true; // ensure we walk first rather than rest for 1min
@@ -558,5 +558,51 @@ sleepButton.addEventListener("click", () => {
   closeMenu();
   doSleep();
 });
+
+catSelect.addEventListener("change", () => {
+  selectedCat = catSelect.value;
+  localStorage.setItem("selectedCat", selectedCat);
+  const resolve = (relPath) => {
+    const catId = `cat${selectedCat}`;
+    const newPath = relPath.replace(/cat\d\d/g, catId);
+    try {
+      const u = new URL(newPath, location.href);
+      return u.toString();
+    } catch (e) {
+      console.error("[PixelPaws] getAssetPath error:", e);
+      return newPath;
+    }
+  };
+
+  idleGif = resolve("catset_assets/catset_gifs/cat01_gifs/cat01_idle_8fps.gif");
+  walkGif = resolve("catset_assets/catset_gifs/cat01_gifs/cat01_walk_8fps.gif");
+  runGif = resolve("catset_assets/catset_gifs/cat01_gifs/cat01_run_12fps.gif");
+  liftedGif = resolve(
+    "catset_assets/catset_gifs/cat01_gifs/cat01_wallgrab_8fps.gif"
+  );
+  attackGif = resolve(
+    "catset_assets/catset_gifs/cat01_gifs/cat01_attack_12fps.gif"
+  );
+  sitGif = resolve("catset_assets/catset_gifs/cat01_gifs/cat01_sit_8fps.gif");
+  lieDownGif = resolve(
+    "catset_assets/catset_gifs/cat01_gifs/cat01_liedown_8fps.gif"
+  );
+  jumpGif = resolve(
+    "catset_assets/catset_gifs/cat01_gifs/cat01_jump_12fps.gif"
+  );
+  landGif = resolve(
+    "catset_assets/catset_gifs/cat01_gifs/cat01_land_12fps.gif"
+  );
+
+  setIdle(); // Reset to idle state with the new cat's GIF
+});
+
+// Poll mouse position ~60fps for chase mode
+setInterval(async () => {
+  try {
+    const pos = (await window.electronAPI?.getMousePosition?.()) || mousePos;
+    mousePos = pos;
+  } catch (_) {}
+}, 16);
 
 init();
